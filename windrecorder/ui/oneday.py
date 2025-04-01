@@ -374,6 +374,16 @@ def render():
                 )
                 if day_is_video_ondisk:
                     show_and_locate_video_timestamp_by_filename_and_time(day_video_file_name, shown_timestamp)
+                    if config.enable_ocr_str_highlight_indicator:
+                        try:
+                            components.ocr_res_position_visualization(
+                                ocr_text_full=st.session_state.df_day_search_result.loc[
+                                    st.session_state.day_search_result_index_num, "ocr_text"
+                                ],
+                                ocr_text_query=st.session_state.day_search_keyword,
+                            )
+                        except Exception as e:
+                            st.error(e)
                     st.markdown(_t("oneday_md_rewinding_video_name").format(day_video_file_name=day_video_file_name))
                     try_get_and_render_deep_linking(method="serach_df")
                 else:
@@ -499,6 +509,9 @@ def show_and_locate_video_timestamp_by_filename_and_time(video_file_name, timest
     video_file = open(videofile_path, "rb")
     video_bytes = video_file.read()
     with st.empty():
+        if st.session_state.day_timestamp < 0:
+            st.toast(f"invalid locate timestamp: {st.session_state.day_timestamp}, set to 1s.")
+            st.session_state.day_timestamp = 1
         st.video(video_bytes, start_time=st.session_state.day_timestamp)
 
 

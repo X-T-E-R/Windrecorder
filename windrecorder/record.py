@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import pygetwindow
 from PIL import Image, ImageDraw
-from send2trash import send2trash
 
 from windrecorder import file_utils, utils
 from windrecorder.config import (
@@ -147,11 +146,19 @@ def get_video_res(video_path):
 
 
 # 压缩视频 CLI
-def compress_video_CLI(video_path, target_width, target_height, encoder, crf_flag, crf, output_path):
-    cmd = f"ffmpeg -hwaccel auto -i {video_path} -vf scale={target_width}:{target_height} -c:v {encoder} {crf_flag} {crf} -pix_fmt yuv420p {output_path}"
+def compress_video_CLI(video_path, target_width, target_height, encoder, crf_flag, crf, output_path, cpu_threads=None):
+    if encoder in ["libx264", "libx265", "libaom-av1"] and cpu_threads is not None:
+        threads_param = f"-threads {cpu_threads}"
+    else:
+        threads_param = ""
 
-    logger.info(f"[compress_video_CLI] {cmd=}")
-    subprocess.call(cmd, shell=True)
+    compress_cmd = (
+        f'ffmpeg -hwaccel auto -i "{video_path}" -vf scale={target_width}:{target_height} '
+        f'{threads_param} -c:v {encoder} {crf_flag} {crf} -preset medium -pix_fmt yuv420p -y "{output_path}"'
+    )
+
+    logger.info(f"[compress_video_CLI] {compress_cmd=}")
+    subprocess.call(compress_cmd, shell=True)
 
 
 # 压缩视频分辨率到输入倍率
@@ -169,6 +176,10 @@ def compress_video_resolution(video_path, scale_factor, custom_output_name=None)
     encoder_default = CONFIG_VIDEO_COMPRESS_PRESET["x264"]["cpu"]["encoder"]
     crf_flag_default = CONFIG_VIDEO_COMPRESS_PRESET["x264"]["cpu"]["crf_flag"]
     crf_default = 39
+    # Get CPU threads setting if using CPU encoder
+    cpu_threads = None
+    if config.compress_accelerator == "cpu":
+        cpu_threads = config.compress_cpu_threads if hasattr(config, "compress_cpu_threads") else None
     try:
         encoder = CONFIG_VIDEO_COMPRESS_PRESET[config.compress_encoder][config.compress_accelerator]["encoder"]
         crf_flag = CONFIG_VIDEO_COMPRESS_PRESET[config.compress_encoder][config.compress_accelerator]["crf_flag"]
@@ -178,9 +189,10 @@ def compress_video_resolution(video_path, scale_factor, custom_output_name=None)
         encoder = encoder_default
         crf_flag = crf_flag_default
         crf = crf_default
+        cpu_threads = 2
 
     # 执行压缩流程
-    def encode_video(encoder=encoder, crf_flag=crf_flag, crf=crf):
+    def encode_video(encoder=encoder, crf_flag=crf_flag, crf=crf, cpu_threads=cpu_threads):
         # 处理压缩视频路径
         if custom_output_name:
             output_newname = custom_output_name
@@ -193,7 +205,7 @@ def compress_video_resolution(video_path, scale_factor, custom_output_name=None)
 
         # 如果输出目的已存在，将其移至回收站
         if os.path.exists(output_path):
-            send2trash(output_path)
+            file_utils.delete_files_via_config(output_path)
 
         compress_video_CLI(
             video_path=video_path,
@@ -203,6 +215,7 @@ def compress_video_resolution(video_path, scale_factor, custom_output_name=None)
             crf_flag=crf_flag,
             crf=crf,
             output_path=output_path,
+            cpu_threads=cpu_threads,
         )
 
         return output_path
@@ -212,11 +225,11 @@ def compress_video_resolution(video_path, scale_factor, custom_output_name=None)
     if os.path.exists(output_path):
         if os.stat(output_path).st_size < 1024:
             logger.warning("Parameter not supported, fallback to default setting.")
-            send2trash(output_path)  # 清理空文件
-            output_path = encode_video(encoder=encoder_default, crf_flag=crf_flag_default, crf=crf_default)
+            file_utils.delete_files_via_config(output_path)  # 清理空文件
+            output_path = encode_video(encoder=encoder_default, crf_flag=crf_flag_default, crf=crf_default, cpu_threads=2)
     else:
         logger.warning("Parameter not supported, fallback to default setting.")
-        output_path = encode_video(encoder=encoder_default, crf_flag=crf_flag_default, crf=crf_default)
+        output_path = encode_video(encoder=encoder_default, crf_flag=crf_flag_default, crf=crf_default, cpu_threads=2)
 
     return output_path
 
@@ -245,7 +258,7 @@ def compress_outdated_videofiles(video_queue_batch=30):
                 logger.info(f"compressing {item}, {video_process_count=}, {video_queue_batch=}")
                 try:
                     compress_video_resolution(item, config.video_compress_rate)
-                    send2trash(item)
+                    file_utils.delete_files_via_config(item)
                     video_process_count += 1
                 except subprocess.CalledProcessError as e:
                     logger.error(f"{item} seems invalid, error: {e}")
@@ -257,8 +270,8 @@ def compress_outdated_videofiles(video_queue_batch=30):
         logger.info("All compress tasks done!")
 
 
-# 测试所有的压制参数，由 webui 指定缩放系数与 crf 压缩质量
-def encode_preset_benchmark_test(scale_factor, crf):
+# 测试所有的压制参数，由 webui 指定缩放系数、crf 压缩质量、CPU线程数
+def encode_preset_benchmark_test(scale_factor, crf, cpu_threads=None):
     scale_factor = float(scale_factor)
     # 准备测试视频
     test_video_filepath = "__assets__\\test_video_compress.mp4"
@@ -292,6 +305,7 @@ def encode_preset_benchmark_test(scale_factor, crf):
             crf_flag=crf_flag,
             crf=crf,
             output_path=output_path,
+            cpu_threads=cpu_threads,
         )
 
         return output_path
@@ -448,7 +462,7 @@ def record_screen_via_screenshot_process():
         datetime_str_record = datetime.datetime.now().strftime(DATETIME_FORMAT)
         datetime_unix_timestamp_record = utils.dtstr_to_seconds(
             datetime_str_record
-        )  # ignore timezone convert walkaround FIXME
+        )  # ignore timezone convert walkaround FIXME 当天第一张截图时间可能小于视频时间，导致定位出现负数
         screenshot_saved_filename = datetime_str_record + ".png"
 
         # if screen lock or system sleep
@@ -604,7 +618,7 @@ def submit_data_to_sqlite_db_process(saved_dir_filepath):
             logger.info("tmp_db_json records not enough")
             try:
                 if len(file_utils.get_file_path_list(saved_dir_filepath)) < 10:
-                    send2trash(saved_dir_filepath)
+                    file_utils.delete_files_via_config(saved_dir_filepath)
                 else:
                     os.rename(saved_dir_filepath, saved_dir_filepath + "-DISCARD")
             except Exception as e:
@@ -649,7 +663,7 @@ def convert_screenshots_dir_into_video_process(saved_dir_filepath):
                 custom_output_name=os.path.basename(output_video_filepath).replace("-NOTCOMPRESS", ""),
             )
             if os.path.exists(output_video_filepath_compress):
-                send2trash(output_video_filepath)
+                file_utils.delete_files_via_config(output_video_filepath)
             os.rename(saved_dir_filepath, saved_dir_filepath + "-VIDEO")
             return saved_dir_filepath + "-VIDEO"
         if is_garbage_data_should_be_clean:
@@ -698,16 +712,16 @@ def clean_cache_screenshots_dir_process():
     video_lst = file_utils.get_file_path_list(config.record_videos_dir_ud)
     for dir_path in dir_lst:
         if "-VIDEO" in dir_path and "-IMGEMB" in dir_path:
-            send2trash(dir_path)
+            file_utils.delete_files_via_config(dir_path)
         elif "-VIDEO" in dir_path or any(os.path.basename(dir_path)[:19] in word for word in video_lst):
             if datetime.datetime.now() - utils.dtstr_to_datetime(os.path.basename(dir_path)[:19]) > datetime.timedelta(
                 days=outdate_day
             ):
-                send2trash(dir_path)
+                file_utils.delete_files_via_config(dir_path)
         elif not os.path.exists(os.path.join(dir_path, SCREENSHOT_CACHE_FILEPATH_TMP_DB_ALL_FILES_NAME)):
-            send2trash(dir_path)
+            file_utils.delete_files_via_config(dir_path)
         elif "-DISCARD" in dir_path:
-            send2trash(dir_path)
+            file_utils.delete_files_via_config(dir_path)
 
 
 def get_screenshot_foreground_window():

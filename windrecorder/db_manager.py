@@ -311,7 +311,9 @@ class _DBManager:
                     # 构建所有关键词的sql
                     conditions = []
                     for keywords in similar_strings_list:
-                        group_condition = " OR ".join(f"ocr_text LIKE '%{keyword}%'" for keyword in keywords)
+                        group_condition = " OR ".join(
+                            f"(ocr_text LIKE '%{keyword}%') OR (win_title LIKE '%{keyword}%')" for keyword in keywords
+                        )
                         conditions.append(f"({group_condition})")
 
                     query = query + " AND ".join(conditions)
@@ -323,7 +325,7 @@ class _DBManager:
                     for keyword in keywords:
                         # Convert the "-" hyphen to spaces
                         keyword = re.sub(r"(?<=\w)-(?=\w)", " ", keyword)
-                        conditions.append(f"ocr_text LIKE '%{keyword}%'")
+                        conditions.append(f"(ocr_text LIKE '%{keyword}%') OR (win_title LIKE '%{keyword}%')")
                     query += " AND ".join(conditions)
 
             else:  # 关键词为空
@@ -834,7 +836,12 @@ class _DBManager:
             return {}
 
         # 去除非当前用户、且临时使用的内容
-        db_list = list(filter(lambda file: file.startswith(self.user_name) and not file.endswith("_TEMP_READ.db"), db_list))
+        db_list = list(
+            filter(
+                lambda file: file.startswith(self.user_name) and file.endswith(".db") and not file.endswith("_TEMP_READ.db"),
+                db_list,
+            )
+        )
 
         if len(db_list) == 0:  # 如果去除了非当前用户内容后为空
             return {}

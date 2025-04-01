@@ -60,6 +60,7 @@
   "compress_encoder": "x264",
   "compress_accelerator": "cpu",
   "compress_quality": 39,
+  "compress_cpu_threads": 2,
   "start_recording_on_startup": true,
   "lock_file_dir": "cache\\locks",
   "maintain_lock_subdir": "LOCK_MAINTAIN",
@@ -116,5 +117,7 @@
   "ai_extract_tag_filter_words": ["Kim Jong-un"],
   "custom_background_filepath": "",
   "custom_background_opacity": 0.9,
-  "convert_screenshots_to_vid_energy_saving_mode": 0
+  "convert_screenshots_to_vid_energy_saving_mode": 0,
+  "enable_ocr_str_highlight_indicator": true,
+  "recycle_deleted_files": true
 }
